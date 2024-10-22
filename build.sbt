@@ -78,6 +78,8 @@ lazy val lib = (project in file("lib"))
     name := "uzushio-lib",
     libraryDependencies ++= sparkDependencies.map(_ % Optional),
     libraryDependencies ++= libdependencies,
+    // 添加 Jsoup 依赖
+    libraryDependencies += "org.jsoup" % "jsoup" % "1.14.3",
     scalacOptions ++= (
       if (scalaVersion.value.startsWith("2.")) {
         Seq("-opt:l:inline", "-opt-inline-from:classpath")

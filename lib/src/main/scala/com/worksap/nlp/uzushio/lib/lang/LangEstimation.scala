@@ -4,7 +4,8 @@ import com.optimaize.langdetect.LanguageDetectorBuilder
 import com.optimaize.langdetect.ngram.NgramExtractor
 import java.nio.charset.{Charset, CodingErrorAction}
 import java.nio.{ByteBuffer, CharBuffer}
-import java.util.regex.{Matcher, Pattern}
+import org.jsoup.Jsoup
+import org.jsoup.nodes.Document
 
 sealed trait EstimationResult {
   def str: String = "unk"
@@ -20,44 +21,26 @@ class LangEstimation(private val minBytes: Int = 256) {
   private val decodeBuffer = CharBuffer.allocate(4 * 1024)
   private def langDetector = LangEstimation.cachedDetector
 
-  /** Remove HTML tags and inline JavaScript from the input.
-    * @param input
-    *   input buffer as a string
+  /** Extract visible text from HTML content using Jsoup
+    * @param html
+    *   input HTML as a string
     * @return
-    *   cleaned string with HTML and JavaScript removed
+    *   cleaned string with only visible text
     */
-  private def cleanHtmlContent(input: String): String = {
-    // Use regex to remove HTML tags and content inside <script> tags
-    val scriptPattern = Pattern.compile("(?s)<script.*?>.*?</script>")
-    val stylePattern = Pattern.compile("(?s)<style.*?>.*?</style>")
-    val commentPattern = Pattern.compile("(?s)<!--.*?-->")
-    val htmlTagPattern = Pattern.compile("<[^>]+>")
+  private def extractVisibleText(html: String): String = {
+    // 使用 Jsoup 解析 HTML 文档
+    val doc: Document = Jsoup.parse(html)
 
-    
-    // Process from 50% ~
-    val startPos = input.length / 2
-    var cleanedContent = input.substring(startPos)
+    // 移除 script 和 style 元素
+    doc.select("script, style").remove()
 
-    // First, remove the <script> and etc block
-    cleanedContent = removePattern(cleanedContent, scriptPattern)
-    cleanedContent = removePattern(cleanedContent, stylePattern)
-    cleanedContent = removePattern(cleanedContent, commentPattern)
-
-    // remove html tags
-    cleanedContent = removePattern(cleanedContent, htmlTagPattern)
-
-    println(s"Cleaned content: ${cleanedContent.take(100)}...") // debug print
-    cleanedContent
-  }
-  
-  /** Helper function to remove pattern from string using JVM's regex */
-  private def removePattern(input: String, pattern: Pattern): String = {
-    val matcher: Matcher = pattern.matcher(input)
-    matcher.replaceAll("")
+    // 提取页面可见文本
+    val visibleText = doc.body().text()
+    println(s"Extracted visible text (first 100 chars): ${visibleText.take(100)}...")
+    visibleText
   }
 
-  /** Copy meaningful content into detection buffer, removing HTML, JavaScript, and retaining text.
-    * Retains both ASCII and non-ASCII characters, focusing on meaningful language content.
+  /** Copy meaningful content into detection buffer, using Jsoup to extract visible text.
     *
     * @param input
     *   input CharBuffer
@@ -65,14 +48,12 @@ class LangEstimation(private val minBytes: Int = 256) {
     *   output CharBuffer
     */
   private def copyMeaningfulContent(input: CharBuffer, output: CharBuffer): Unit = {
-    // Convert the input to a string
+    // 将输入转换为字符串并提取可见文本
     val content = input.toString
+    val visibleText = extractVisibleText(content)
 
-    // Use regex to remove HTML tags and JavaScript
-    val cleanedContent = cleanHtmlContent(content)
-
-    // Filter and clean the remaining text, retaining letters, digits, whitespace, and non-ASCII characters
-    val meaningfulContent = cleanedContent.flatMap { char =>
+    // 过滤并清理剩下的文本内容，保留字母、数字、空格以及非 ASCII 字符
+    val meaningfulContent = visibleText.flatMap { char =>
       if (char.isLetterOrDigit || char.isWhitespace || char >= 128) {
         Some(char)
       } else {
@@ -80,11 +61,15 @@ class LangEstimation(private val minBytes: Int = 256) {
       }
     }
 
-    // Put the cleaned content into the output buffer
-    val result = meaningfulContent.mkString.trim
-    println(s"Meaningful content: $result") // Print the meaningful content
-    // Copy meaningful content to the output buffer
-    output.put(result)
+    // 打印有意义的内容 (前 100 个字符)
+    println(s"Meaningful content (first 100 chars): ${meaningfulContent.take(100)}...")
+
+    // 确保有意义的内容不为空并写入到输出缓冲区
+    if (meaningfulContent.nonEmpty) {
+      output.put(meaningfulContent.mkString)
+    }
+
+    output.flip() // 确保缓冲区准备好读取
   }
 
   private def prepareBuffer(
@@ -105,26 +90,27 @@ class LangEstimation(private val minBytes: Int = 256) {
         return None
       }
       decBuf.flip()
-      copyMeaningfulContent(decBuf, buf)
+      copyMeaningfulContent(decBuf, buf) // 将清理后的内容写入 `internalBuffer`
       decBuf.clear()
     }
 
     buf.flip()
+    println(s"Copied characters: ${buf.limit()}") // 打印已复制的字符数量
     Some(buf.limit())
   }
 
-  /** Estimate the language by taking at most 5k characters from the first 20kb of text.
+  /** Estimate language by taking at most 5k characters from first 20kb of text.
     * Retains both ASCII and non-ASCII characters, but removes HTML and JavaScript tags.
-    * Returns [[BadEncoding]] if there are unmappable characters using the provided encoding.
+    * Returns [[BadEncoding]] if there exist non-mappable characters using the passed encoding.
     *
     * @param data
-    *   the text to detect language from
+    *   text to detect language from
     * @param offset
-    *   the offset from the start of the array
+    *   offset from the array start
     * @param charset
-    *   the charset to use for converting byte stream to characters
+    *   charset to use for converting byte stream to characters
     * @return
-    *   a subclass of [[EstimationResult]]
+    *   child classes of [[EstimationResult]]
     */
   def estimateLang(
       data: Array[Byte],
@@ -132,21 +118,19 @@ class LangEstimation(private val minBytes: Int = 256) {
       charset: Charset
   ): EstimationResult = {
     val bufferStatus = prepareBuffer(data, offset, charset)
-    val internalBufferString = internalBuffer.toString
-    println(s"internalBuffer: $internalBufferString") // Print the content of the internal buffer
     if (bufferStatus.isEmpty) {
       return BadEncoding
     }
     val ncopied = bufferStatus.get
-    println(s"Copied characters: $ncopied") // Print the number of copied characters
+    println(s"Copied characters: $ncopied") // 打印已复制的字符数量
     if (ncopied > minBytes) {
       val language = langDetector.detect(internalBuffer)
-      println(s"Detected language: ${language}") // Print the detected language
+      println(s"Detected language: ${language}") // 打印探测到的语言
       if (!language.isPresent) {
         EstimationFailure
       } else {
         val code = language.get().getLanguage
-        println(s"Detected language code: $code") // Print the detected language code
+        println(s"Detected language code: $code") // 打印探测到的语言代码
         ProbableLanguage(code)
       }
     } else {
