@@ -2,9 +2,10 @@ package com.worksap.nlp.uzushio.lib.lang
 
 import com.optimaize.langdetect.LanguageDetectorBuilder
 import com.optimaize.langdetect.ngram.NgramExtractor
-
 import java.nio.charset.{Charset, CodingErrorAction}
 import java.nio.{ByteBuffer, CharBuffer}
+import org.jsoup.Jsoup
+import org.jsoup.nodes.Document
 
 sealed trait EstimationResult {
   def str: String = "unk"
@@ -20,26 +21,55 @@ class LangEstimation(private val minBytes: Int = 256) {
   private val decodeBuffer = CharBuffer.allocate(4 * 1024)
   private def langDetector = LangEstimation.cachedDetector
 
-  /** Copy non-ASCII characters into detection buffer
-    * @param input
-    *   input buffer
-    * @param output
-    *   output buffer
+  /** Extract visible text from HTML content using Jsoup
+    * @param html
+    *   input HTML as a string
+    * @return
+    *   cleaned string with only visible text
     */
-  private def copyNonAscii(input: CharBuffer, output: CharBuffer): Unit = {
-    var prevWhitespace = false
-    while (input.hasRemaining && output.remaining() > 1) {
-      val char = input.get()
-      if ((char & 0xffff) >= 128) {
-        if (prevWhitespace) {
-          output.put(' ')
-          prevWhitespace = false
-        }
-        output.put(char)
+  private def extractVisibleText(html: String): String = {
+    // 使用 Jsoup 解析 HTML 文档
+    val doc: Document = Jsoup.parse(html)
+
+    // 移除 script 和 style 元素
+    doc.select("script, style").remove()
+
+    // 提取页面可见文本
+    val visibleText = doc.body().text()
+    println(s"Extracted visible text (first 100 chars): ${visibleText.take(100)}...")
+    visibleText
+  }
+
+  /** Copy meaningful content into detection buffer, using Jsoup to extract visible text.
+    *
+    * @param input
+    *   input CharBuffer
+    * @param output
+    *   output CharBuffer
+    */
+  private def copyMeaningfulContent(input: CharBuffer, output: CharBuffer): Unit = {
+    // 将输入转换为字符串并提取可见文本
+    val content = input.toString
+    val visibleText = extractVisibleText(content)
+
+    // 过滤并清理剩下的文本内容，保留字母、数字、空格以及非 ASCII 字符
+    val meaningfulContent = visibleText.flatMap { char =>
+      if (char.isLetterOrDigit || char.isWhitespace || char >= 128) {
+        Some(char)
       } else {
-        prevWhitespace = true
+        None
       }
     }
+
+    // 打印有意义的内容 (前 100 个字符)
+    println(s"Meaningful content (first 100 chars): ${meaningfulContent.take(100)}...")
+
+    // 确保有意义的内容不为空并写入到输出缓冲区
+    if (meaningfulContent.nonEmpty) {
+      output.put(meaningfulContent.mkString)
+    }
+
+    output.flip() // 确保缓冲区准备好读取
   }
 
   private def prepareBuffer(
@@ -60,17 +90,18 @@ class LangEstimation(private val minBytes: Int = 256) {
         return None
       }
       decBuf.flip()
-      copyNonAscii(decBuf, buf)
+      copyMeaningfulContent(decBuf, buf) // 将清理后的内容写入 `internalBuffer`
       decBuf.clear()
     }
 
     buf.flip()
+    println(s"Copied characters: ${buf.limit()}") // 打印已复制的字符数量
     Some(buf.limit())
   }
 
-  /** Estimate language by taking at most 5k characters from first 20kb of text. This detector
-    * ignores all ASCII characters, so languages which use such scripts are not detectable. Returns
-    * [[BadEncoding]] if there exist non-mappable characters using the passed encoding.
+  /** Estimate language by taking at most 5k characters from first 20kb of text.
+    * Retains both ASCII and non-ASCII characters, but removes HTML and JavaScript tags.
+    * Returns [[BadEncoding]] if there exist non-mappable characters using the passed encoding.
     *
     * @param data
     *   text to detect language from
@@ -91,12 +122,15 @@ class LangEstimation(private val minBytes: Int = 256) {
       return BadEncoding
     }
     val ncopied = bufferStatus.get
+    println(s"Copied characters: $ncopied") // 打印已复制的字符数量
     if (ncopied > minBytes) {
       val language = langDetector.detect(internalBuffer)
+      println(s"Detected language: ${language}") // 打印探测到的语言
       if (!language.isPresent) {
         EstimationFailure
       } else {
         val code = language.get().getLanguage
+        println(s"Detected language code: $code") // 打印探测到的语言代码
         ProbableLanguage(code)
       }
     } else {
