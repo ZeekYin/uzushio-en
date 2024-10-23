@@ -60,16 +60,11 @@ class LangEstimation(private val minBytes: Int = 256) {
         None
       }
     }
-
-    // 打印有意义的内容 (前 100 个字符)
-    println(s"Meaningful content (first 100 chars): ${meaningfulContent.take(100)}...")
-
-    // 确保有意义的内容不为空并写入到输出缓冲区
-    if (meaningfulContent.nonEmpty) {
-      output.put(meaningfulContent.mkString)
-    }
-
-    output.flip() // 确保缓冲区准备好读取
+    // Put the cleaned content into the output buffer
+    val result = meaningfulContent.mkString.trim
+    println(s"Meaningful content: $result") // Print the meaningful content
+    // Copy meaningful content to the output buffer
+    output.put(result)
   }
 
   private def prepareBuffer(

@@ -2,6 +2,7 @@ package com.worksap.nlp.uzushio.lib.lang
 
 import java.nio.charset.{Charset, StandardCharsets}
 import org.scalatest.freespec.AnyFreeSpec
+import scala.io.Source
 
 class LangEstimationSpec extends AnyFreeSpec {
 
@@ -32,22 +33,11 @@ class LangEstimationSpec extends AnyFreeSpec {
       assert(result.asInstanceOf[ProbableLanguage].lang == "ja") // 期待的结果是日语
     }
 
-    "detects English language from a simulated Wikipedia page about Japan" in {
-      // 模拟维基百科关于日本的英文页面，并用 UTF-8 编码
-      val htmlContent = """
-        <html>
-          <head>
-            <title>Japan - Wikipedia</title>
-          </head>
-          <body>
-            <h1>Japan</h1>
-            <p>Japan is an island country in East Asia, located in the northwest Pacific Ocean. It borders the Sea of Japan to the west, and extends from the Sea of Okhotsk in the north to the East China Sea and Taiwan in the south.</p>
-            <p>Japan is a highly developed country, known for its advanced technology, strong economy, and rich culture. With a population of over 125 million, Japan is the world's eleventh most populous country, and Tokyo, its capital, is one of the most populous cities in the world.</p>
-            <p>The country's history dates back to the 14th century BC, and over the centuries, it has evolved through various dynasties and periods. Modern Japan emerged in the late 19th century during the Meiji Restoration, which transformed it into an industrial and economic power.</p>
-            <p>After World War II, Japan experienced rapid recovery and became one of the world's leading economies. Today, Japan is known for its influence in global technology, culture, and economy.</p>
-          </body>
-        </html>
-      """
+    "detects English language from a real HTML file" in {
+      // 从文件中读取 HTML 内容
+      val source = Source.fromResource("en_page.html")(StandardCharsets.UTF_8)
+      val htmlContent = try source.mkString finally source.close()
+      
       val data = htmlContent.getBytes(StandardCharsets.UTF_8)
       val result = estimator.estimateLang(data, 0, StandardCharsets.UTF_8)
       
