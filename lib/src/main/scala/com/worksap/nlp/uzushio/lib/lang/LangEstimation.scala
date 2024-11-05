@@ -28,13 +28,13 @@ class LangEstimation(private val minBytes: Int = 256) {
     *   cleaned string with only visible text
     */
   private def extractVisibleText(html: String): String = {
-    // 使用 Jsoup 解析 HTML 文档
+    // parse html
     val doc: Document = Jsoup.parse(html)
 
-    // 移除 script 和 style 元素
+    // remove script and style tags
     doc.select("script, style").remove()
 
-    // 提取页面可见文本
+    // extract visible text
     val visibleText = doc.body().text()
     println(s"Extracted visible text (first 100 chars): ${visibleText.take(100)}...")
     visibleText
@@ -48,11 +48,11 @@ class LangEstimation(private val minBytes: Int = 256) {
     *   output CharBuffer
     */
   private def copyMeaningfulContent(input: CharBuffer, output: CharBuffer): Unit = {
-    // 将输入转换为字符串并提取可见文本
+    // Extract visible text from the input buffer
     val content = input.toString
     val visibleText = extractVisibleText(content)
 
-    // 过滤并清理剩下的文本内容，保留字母、数字、空格以及非 ASCII 字符
+    // Clean the visible text
     val meaningfulContent = visibleText.flatMap { char =>
       if (char.isLetterOrDigit || char.isWhitespace || char >= 128) {
         Some(char)
@@ -85,12 +85,12 @@ class LangEstimation(private val minBytes: Int = 256) {
         return None
       }
       decBuf.flip()
-      copyMeaningfulContent(decBuf, buf) // 将清理后的内容写入 `internalBuffer`
+      copyMeaningfulContent(decBuf, buf) // Copy meaningful content to the detection buffer
       decBuf.clear()
     }
 
     buf.flip()
-    println(s"Copied characters: ${buf.limit()}") // 打印已复制的字符数量
+    println(s"Copied characters: ${buf.limit()}") //debug
     Some(buf.limit())
   }
 
@@ -117,15 +117,15 @@ class LangEstimation(private val minBytes: Int = 256) {
       return BadEncoding
     }
     val ncopied = bufferStatus.get
-    println(s"Copied characters: $ncopied") // 打印已复制的字符数量
+    println(s"Copied characters: $ncopied") // debug
     if (ncopied > minBytes) {
       val language = langDetector.detect(internalBuffer)
-      println(s"Detected language: ${language}") // 打印探测到的语言
+      println(s"Detected language: ${language}") // debug
       if (!language.isPresent) {
         EstimationFailure
       } else {
         val code = language.get().getLanguage
-        println(s"Detected language code: $code") // 打印探测到的语言代码
+        println(s"Detected language code: $code") // debug
         ProbableLanguage(code)
       }
     } else {
